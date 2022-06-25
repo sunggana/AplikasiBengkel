@@ -1,10 +1,12 @@
 package com.example.aplikasibengkel;
 
 import android.os.AsyncTask;
+import android.util.Log;
 
 import com.android.volley.toolbox.JsonArrayRequest;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
+import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.MarkerOptions;
 
@@ -13,6 +15,8 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
 
 public class GetNearbyPlace extends AsyncTask<Object,String, String> {
 
@@ -21,41 +25,11 @@ public class GetNearbyPlace extends AsyncTask<Object,String, String> {
     String url;
 
     @Override
-    protected void onPostExecute(String s) {
-        try{
-            JSONObject jsonObject = new JSONObject(s);
-            JSONArray jsonArray = jsonObject.getJSONArray("results");
-            for(int i=0;i<jsonArray.length();i++){
-
-                JSONObject jsonObject1 = jsonArray.getJSONObject(i);
-                JSONObject getLocation = jsonObject1.getJSONObject("geometry")
-                        .getJSONObject("location");
-
-                String lat = getLocation.getString("lat");
-                String lng = getLocation.getString("lng");
-
-                JSONObject getName = jsonArray.getJSONObject(i);
-                String name=getName.getString("name");
-
-                LatLng latLng=new LatLng(Double.parseDouble(lat),Double.parseDouble(lng));
-                MarkerOptions markerOptions=new MarkerOptions();
-                markerOptions.title(name);
-                markerOptions.position(latLng);
-                googleMap.addMarker(markerOptions);
-                googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng,15));
-            }
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-    }
-
-    @Override
     protected String doInBackground(Object... objects) {
-
+        googleMap=(GoogleMap) objects[0];
+        url=(String) objects[1];
+        DownloadURL downloadURL = new DownloadURL();
         try{
-            googleMap=(GoogleMap) objects[0];
-            url=(String) objects[1];
-            DownloadURL downloadURL = new DownloadURL();
             googleNearbyPlaceData=downloadURL.ngambilURL(url);
         }catch(IOException e){
             e.printStackTrace();
@@ -63,5 +37,36 @@ public class GetNearbyPlace extends AsyncTask<Object,String, String> {
         return googleNearbyPlaceData;
 
 
+    }
+
+    @Override
+    protected void onPostExecute(String s) {
+        List<HashMap<String,String>> nearbyPlaceList;
+        DataParser parser = new DataParser();
+        nearbyPlaceList = parser.parse(s);
+        Log.d("Nearbyplacesdata","called parse method");
+        showNearbyPlaces(nearbyPlaceList);
+
+    }
+    private void showNearbyPlaces(List<HashMap<String,String>> nearbyPlaceList){
+        for(int i =0;i<nearbyPlaceList.size();i++){
+            MarkerOptions markerOptions = new MarkerOptions();
+            HashMap<String,String> googlePlace = nearbyPlaceList.get(i);
+
+            String placeName = googlePlace.get("place_name");
+            String vicinity = googlePlace.get("vicinity");
+            double lat = Double.parseDouble(googlePlace.get("lat"));
+            double lng = Double.parseDouble(googlePlace.get("lng"));
+
+            LatLng latLng = new LatLng(lat,lng);
+            markerOptions.position(latLng);
+            markerOptions.title(placeName + " : " + vicinity);
+            markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE));
+
+            googleMap.addMarker(markerOptions);
+            googleMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
+            googleMap.animateCamera(CameraUpdateFactory.zoomTo(10));
+
+        }
     }
 }
