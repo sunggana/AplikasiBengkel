@@ -1,20 +1,30 @@
 package com.example.aplikasibengkel;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.FragmentActivity;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.pm.PackageManager;
+import android.location.Address;
+import android.location.Geocoder;
 import android.location.Location;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
+import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.Toast;
 
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationListener;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
@@ -22,6 +32,7 @@ import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
+import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
@@ -29,77 +40,55 @@ import com.example.aplikasibengkel.databinding.ActivityMapsBinding;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
 
+import java.io.IOException;
+import java.util.List;
 
-public class MapsActivity extends FragmentActivity implements OnMapReadyCallback {
+
+public class MapsActivity extends FragmentActivity implements OnMapReadyCallback, GoogleApiClient.ConnectionCallbacks,
+GoogleApiClient.OnConnectionFailedListener, LocationListener , GoogleMap.OnMarkerClickListener,GoogleMap.OnMarkerDragListener{
 
     private GoogleMap mMap;
-    private ActivityMapsBinding binding;
-    private FusedLocationProviderClient mFusedLocationClient;
-    private static final int Request_Code = 101;
-    private LocationServices LocationService;
-    private double lat,lng;
-    ImageButton Motor , Mobil;
+    private GoogleApiClient client;
+    private LocationRequest locationRequest;
+    private Location lastlocation;
+    private Marker currentLocationmMarker;
+    public static final int REQUEST_LOCATION_CODE =99;
+    int PROXIMITY_RADIUS = 10000;
+    double latitude , longitude;
+    double end_latitude , end_longitude;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_maps);
 
-        binding = ActivityMapsBinding.inflate(getLayoutInflater());
-        setContentView(binding.getRoot());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+        {
+            checkLocationPermission();
 
-        Mobil =findViewById(R.id.mobil);
-        Motor =findViewById(R.id.motor);
-
-        mFusedLocationClient =
-                LocationService.getFusedLocationProviderClient(this.getApplicationContext());
-
+        }
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
+    }
 
-        Mobil.setOnClickListener(new View.OnClickListener(){
-            @Override
-            public void onClick(View view) {
-                StringBuilder stringBuilder= new StringBuilder
-                        ("https://maps.googleapis.com/maps/api/place/nearbysearch/json?");
-                stringBuilder.append("location" + lat + "."+lng);
-                stringBuilder.append("&radius=1000");
-                stringBuilder.append("&type=bengkel mobil");
-                stringBuilder.append("&sensor=true");
-                stringBuilder.append("keys="+getResources().getString(R.string.google_maps_key));
-
-                String url = stringBuilder.toString();
-                Object dataFetch[]=new Object[2];
-                dataFetch[0]=mMap;
-                dataFetch[1]=url;
-
-                GetNearbyPlace getNearbyPlace=new GetNearbyPlace();
-                getNearbyPlace.execute(dataFetch);
-
-            }
-        });
-        Motor.setOnClickListener(new View.OnClickListener(){
-
-            @Override
-            public void onClick(View v) {
-                StringBuilder stringBuilder= new StringBuilder
-                        ("https://maps.googleapis.com/maps/api/place/nearbysearch/json?");
-                stringBuilder.append("location" + lat + "."+lng);
-                stringBuilder.append("&radius=1000");
-                stringBuilder.append("&type=bengkel motor");
-                stringBuilder.append("&sensor=true");
-                stringBuilder.append("keys="+getResources().getString(R.string.google_maps_key));
-
-                String url = stringBuilder.toString();
-                Object dataFetch[]=new Object[2];
-                dataFetch[0]=mMap;
-                dataFetch[1]=url;
-
-                GetNearbyPlace getNearbyPlace=new GetNearbyPlace();
-                getNearbyPlace.execute(dataFetch);
-            }
-        });
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        switch (requestCode) {
+            case REQUEST_LOCATION_CODE:
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                        if (client == null) {
+                            buildGoogleApiClient();
+                        }
+                        mMap.setMyLocationEnabled(true);
+                    }
+                } else {
+                    Toast.makeText(this, "Permission Denied", Toast.LENGTH_LONG).show();
+                }
+        }
     }
 
     /**
@@ -115,81 +104,232 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
 
-        // Add a marker in Sydney and move the camera
-       getCurrentLocation();
-    }
-    //get current location
-    private void getCurrentLocation(){
-        if(ActivityCompat.checkSelfPermission(
-                this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
-                && ActivityCompat.checkSelfPermission(
-                        this,Manifest.permission.ACCESS_COARSE_LOCATION)!= PackageManager.PERMISSION_GRANTED){
-            ActivityCompat.requestPermissions
-                    (this,new String[]{Manifest.permission.ACCESS_FINE_LOCATION},Request_Code);
-            return;
 
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            buildGoogleApiClient();
+            mMap.setMyLocationEnabled(true);
+        }
+        mMap.clear();
+        mMap.setOnMarkerDragListener(this);
+        mMap.setOnMarkerClickListener(this);
+    }
+
+
+    protected synchronized void buildGoogleApiClient() {
+        client = new GoogleApiClient.Builder(this)
+                .addConnectionCallbacks(this)
+                .addOnConnectionFailedListener(this)
+                .addApi(LocationServices.API)
+                .build();
+        client.connect();
+
+    }
+
+    @Override
+    public void onLocationChanged(Location location) {
+
+        end_latitude = location.getLatitude();
+        end_longitude = location.getLongitude();
+        lastlocation = location;
+        if(currentLocationmMarker != null)
+        {
+            currentLocationmMarker.remove();
 
         }
-        LocationRequest locationRequest= LocationRequest.create();
-        locationRequest.setInterval(6000);
-        locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
-        locationRequest.setFastestInterval(5000);
-        //receive notif
-        LocationCallback locationCallback= new LocationCallback() {
-            @Override
-            public void onLocationResult(@NonNull LocationResult locationResult) {
-                Toast.makeText(getApplicationContext(),"location Result is="+locationResult
-                        ,Toast.LENGTH_LONG).show();
-                if(locationResult==null){
-                    Toast.makeText(getApplicationContext(),"location Result is NULL="+locationResult
-                            ,Toast.LENGTH_LONG).show();
+        Log.d("lat = ",""+end_latitude);
+        LatLng latLng = new LatLng(location.getLatitude() , location.getLongitude());
+        MarkerOptions markerOptions = new MarkerOptions();
+        markerOptions.position(latLng);
+        markerOptions.title("Current Location");
+        markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE));
+        currentLocationmMarker = mMap.addMarker(markerOptions);
+        mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
+        mMap.animateCamera(CameraUpdateFactory.zoomBy(10));
 
-                    return;
+        if(client != null)
+        {
+            LocationServices.FusedLocationApi.removeLocationUpdates(client,this);
+        }
+    }
 
-                }
-                for(Location location:locationResult.getLocations()){
+    @SuppressLint("NonConstantResourceId")
+    public void onClick(View v)
+    {
+        Object[] dataTransfer;
+        dataTransfer = new Object[4];
+        GetNearbyPlace getNearbyPlacesData = new GetNearbyPlace();
 
-                    if(location!=null){
-                        Toast.makeText(getApplicationContext(),"Current location is ="+locationResult
-                                ,Toast.LENGTH_LONG).show();
+        switch(v.getId())
+        {
+            case R.id.B_Search:
+                EditText tf_location =  findViewById(R.id.TF_location);
+                String location = tf_location.getText().toString();
+                List<Address> addressList;
+
+                if(!location.equals(""))
+                {
+                    Geocoder geocoder = new Geocoder(this);
+
+                    try {
+                        addressList = geocoder.getFromLocationName(location, 5);
+
+                        if(addressList != null)
+                        {
+                            for(int i = 0;i<addressList.size();++i)
+                            {
+                                LatLng latLng = new LatLng(addressList.get(i).getLatitude() , addressList.get(i).getLongitude());
+                                MarkerOptions markerOptions = new MarkerOptions();
+                                markerOptions.position(latLng);
+                                markerOptions.title(location);
+                                mMap.addMarker(markerOptions);
+                                mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
+                                mMap.animateCamera(CameraUpdateFactory.zoomTo(10));
+                                float results[]=new float[10];
+                                Location.distanceBetween(end_latitude,end_longitude,latitude,longitude,results);
+                                markerOptions.snippet("distance : "+results[0]);
+                                break;
+
+                            }
+                        }
+                    } catch (IOException e) {
+                        e.printStackTrace();
                     }
                 }
+                break;
+            case R.id.mobil:
+                ImageButton img_btn;
+                img_btn = (ImageButton) findViewById(R.id.mobil);
+                mMap.clear();
+                String bengkelmobil = "mobil";
+                dataTransfer =new Object[2];
+                String url = getUrl(latitude, longitude, bengkelmobil);
+                getNearbyPlacesData = new GetNearbyPlace();
+                dataTransfer[0] = mMap;
+                dataTransfer[1] = url;
+
+
+                getNearbyPlacesData.execute(dataTransfer);
+                Toast.makeText(MapsActivity.this, "Showing Nearby Bengkel Mombil", Toast.LENGTH_SHORT).show();
+                break;
+
+
+            case R.id.motor:
+                img_btn = (ImageButton)findViewById(R.id.motor) ;
+                mMap.clear();
+                String bengkelmotor = "motor";
+                dataTransfer =new Object[2];
+                url = getUrl(latitude, longitude, bengkelmotor);
+                getNearbyPlacesData = new GetNearbyPlace();
+                dataTransfer[0] = mMap;
+                dataTransfer[1] = url;
+
+                getNearbyPlacesData.execute(dataTransfer);
+                Toast.makeText(MapsActivity.this, "Showing Nearby Bengkel Motor", Toast.LENGTH_SHORT).show();
+                break;
+
+            case R.id.B_Tujuan:
+                dataTransfer = new Object[3];
+                url = getDirectionsUrl();
+                GetDirectionsData getDirectionsData = new GetDirectionsData();
+                dataTransfer[0] = mMap;
+                dataTransfer[1] = url;
+                dataTransfer[2]=new LatLng(end_latitude , end_longitude);
+                getDirectionsData.execute(dataTransfer);
+                break;
+
+        }
+    }
+
+    private String getDirectionsUrl(){
+        StringBuilder googleDirectionsURl = new StringBuilder("https://maps.googleapis.com/maps/api/directions/json?");
+        googleDirectionsURl.append("origin"+latitude+","+longitude);
+        googleDirectionsURl.append("&destination"+end_latitude+","+end_longitude);
+        googleDirectionsURl.append("&key="+"AIzaSyCKwyzKSczJneMoXE-Pp_hjCHeK1iW2vQ0");
+
+        return googleDirectionsURl.toString();
+    }
+
+
+    private String getUrl(double latitude , double longitude , String nearbyPlace)
+    {
+
+        StringBuilder googlePlaceUrl = new StringBuilder("https://maps.googleapis.com/maps/api/place/nearbysearch/json?");
+        googlePlaceUrl.append("location="+latitude+","+longitude);
+        googlePlaceUrl.append("&radius=1000000");
+        googlePlaceUrl.append("&type="+nearbyPlace);
+        googlePlaceUrl.append("&sensor=true");
+        googlePlaceUrl.append("&key="+getString(R.string.google_maps_key));
+
+        Log.d("MapsActivity", "url = "+googlePlaceUrl.toString());
+
+        return googlePlaceUrl.toString();
+    }
+
+    @Override
+    public void onConnected(@Nullable Bundle bundle) {
+
+        locationRequest = new LocationRequest();
+        locationRequest.setInterval(100);
+        locationRequest.setFastestInterval(1000);
+        locationRequest.setPriority(LocationRequest.PRIORITY_BALANCED_POWER_ACCURACY);
+
+
+        if(ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION ) == PackageManager.PERMISSION_GRANTED)
+        {
+            LocationServices.FusedLocationApi.requestLocationUpdates(client, locationRequest, this);
+        }
+    }
+
+
+    public boolean checkLocationPermission()
+    {
+        if(ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_FINE_LOCATION)  != PackageManager.PERMISSION_GRANTED )
+        {
+
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this,Manifest.permission.ACCESS_FINE_LOCATION))
+            {
+                ActivityCompat.requestPermissions(this,new String[] {Manifest.permission.ACCESS_FINE_LOCATION },REQUEST_LOCATION_CODE);
             }
-        };
-
-        mFusedLocationClient.requestLocationUpdates
-                (locationRequest,locationCallback,null);
-
-        Task<Location> task =mFusedLocationClient.getLastLocation();
-        task.addOnSuccessListener(new OnSuccessListener<Location>() {
-            @Override
-            public void onSuccess(Location location) {
-
-
-                if(location!=null){
-                    lat = location.getLatitude();
-                    lng = location.getLongitude();
-
-                    LatLng latLng = new LatLng(lat , lng);
-                    mMap.addMarker(new MarkerOptions().position(latLng).title("current location"));
-                    mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
-                    mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng,15));
-
-                }
+            else
+            {
+                ActivityCompat.requestPermissions(this,new String[] {Manifest.permission.ACCESS_FINE_LOCATION },REQUEST_LOCATION_CODE);
             }
-        });
+            return false;
+
+        }
+        else
+            return true;
+    }
+
+
+
+    @Override
+    public void onConnectionSuspended(int i) {
+    }
+
+    @Override
+    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
+    }
+
+    @Override
+    public boolean onMarkerClick(@NonNull Marker marker) {
+        marker.setDraggable(true);
+        return false;
+    }
+
+    @Override
+    public void onMarkerDrag(@NonNull Marker marker) {
 
     }
-    //permission buat akses lokasi
-    @SuppressLint("MissingSuperCall")
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
 
-        switch (Request_Code){
-            case Request_Code:
-                if(grantResults.length>0 &&grantResults[0]==PackageManager.PERMISSION_GRANTED){
-                    getCurrentLocation();
-                }
-        }
+    @Override
+    public void onMarkerDragEnd(@NonNull Marker marker) {
+        end_latitude = marker.getPosition().latitude;
+        end_longitude = marker.getPosition().longitude;
+    }
+
+    @Override
+    public void onMarkerDragStart(@NonNull Marker marker) {
+
     }
 }
